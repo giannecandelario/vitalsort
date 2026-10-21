@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local secrets (nlp_engine_ai reads OPENAI_API_KEY from the environment)
+.env
+
+# Runtime scratch directory created by backend/main.py on import
+Vitalsort-App/temp_processing/
+
+# SQLite is runtime state, not source. Already-tracked copies must be
+# untracked with `git rm --cached` before this rule takes effect.
+*.db
+*.db-journal
+*.sqlite
+
+# Finder metadata
+.DS_Store

@@ -50,12 +50,15 @@ if (submitNlpBtn) {
 
             const result = await response.json();
 
+            // Model output is free text and setStatus() assigns innerHTML.
+            const aiHtml = aiAnalysisHtml(result.ai_analysis, result.ai_escalated, result.priority_level);
+
             if (result.is_emergency) {
                 setStatus(nlpStatus, 'emergency',
-                    `<strong>Emergency Protocol:</strong> ${result.emergency_protocol}<br>Specialist: ${result.specialist}`);
+                    `<strong>Emergency Protocol:</strong> ${escapeHtml(result.emergency_protocol)}<br>Specialist: ${escapeHtml(result.specialist)}${aiHtml}`);
             } else {
                 setStatus(nlpStatus, 'success',
-                    `<strong>Specialist:</strong> ${result.specialist} &nbsp;·&nbsp; <strong>Severity:</strong> ${result.symptom_severity}`);
+                    `<strong>Level:</strong> ${escapeHtml(result.priority_level)} &nbsp;·&nbsp; <strong>Specialist:</strong> ${escapeHtml(result.specialist)} &nbsp;·&nbsp; <strong>Severity:</strong> ${escapeHtml(result.symptom_severity)}${aiHtml}`);
             }
 
             setTimeout(fetchQueue, 1000);
@@ -165,6 +168,35 @@ function getPriorityBadge(level) {
 function setStatus(el, type, html) {
     el.className = 'status status-' + type;
     el.innerHTML = html;
+}
+
+function escapeHtml(value) {
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Builds the AI clinician block. Returns '' when the analysis is absent so the
+// intake output is byte-for-byte what it was before the feature was configured.
+function aiAnalysisHtml(analysis, escalated, level) {
+    if (!analysis) return '';
+
+    const lines = [];
+    const list = items => (items || []).map(escapeHtml).join(' · ');
+    lines.push(`<strong>AI clinician</strong> (${escapeHtml(analysis.model)}) · urgency: ${escapeHtml(analysis.urgency)}`);
+    if ((analysis.red_flags || []).length) lines.push(`Red flags: ${list(analysis.red_flags)}`);
+    if ((analysis.differential || []).length) {
+        lines.push('Differential: ' + analysis.differential
+            .map(d => `${escapeHtml(d.condition)} (${escapeHtml(d.likelihood)})`).join(' · '));
+    }
+    if ((analysis.immediate_actions || []).length) lines.push(`Actions: ${list(analysis.immediate_actions)}`);
+    if (analysis.specialist) lines.push(`AI referral: ${escapeHtml(analysis.specialist)}`);
+    lines.push('Sources: ' + ((analysis.citations || []).length
+        ? analysis.citations.map(c => `${escapeHtml(c.source)} — ${escapeHtml(c.claim)}`).join(' · ')
+        : 'none cited by the model'));
+    if (analysis.confidence_note) lines.push(escapeHtml(analysis.confidence_note));
+    if (escalated) lines.push(`<em>Escalated to ${escapeHtml(level)}</em>`);
+
+    return '<div><br>' + lines.join('<br>') + '</div>';
 }
 
 // 4. REST: Provider Dashboard

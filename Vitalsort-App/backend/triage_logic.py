@@ -53,7 +53,8 @@ class CriticalHeuristicTriage:
         
         Args:
             symptom_list: List of extracted symptoms
-            acuity_level: Acuity classification from NLPEngine (e.g., "Urgent/Emergency Risk")
+            acuity_level: Acuity classification from NLPEngine, recorded for the
+                caller's context. It does not declare an emergency by itself.
             raw_text: Original user text (for phrase matching)
             
         Returns:
@@ -77,10 +78,13 @@ class CriticalHeuristicTriage:
                 triggered_flags.append(category)
                 triggered_categories.add(category)
         
-        # Determine if emergency based on flags or acuity level
-        if triggered_flags or acuity_level == "Urgent/Emergency Risk":
-            # Select primary protocol (first triggered category, or respiratory as default)
-            primary_category = triggered_flags[0] if triggered_flags else "respiratory"
+        # An emergency needs a matched trigger phrase. acuity_level is kept in the
+        # signature because callers pass it, but it is deliberately not sufficient:
+        # _determine_acuity answers "Urgent/Emergency Risk" whenever the zero-shot
+        # severity classifier says "severe" alongside two or more symptoms, which
+        # made a sprained ankle a Level 1 with the respiratory airway protocol.
+        if triggered_flags:
+            primary_category = triggered_flags[0]
             protocol_text = CriticalHeuristicTriage.EMERGENCY_PROTOCOLS.get(
                 primary_category, 
                 "Call 911 immediately. Patient requires emergency evaluation."

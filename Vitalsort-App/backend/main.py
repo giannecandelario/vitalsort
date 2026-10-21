@@ -1,4 +1,5 @@
 import os
+import asyncio
 import secrets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from vision_engine_ai import AdvancedVisionEngine
 from nlp_engine_ai import AdvancedNLPEngine
 from predictive_analytics_ai import PredictiveAnalyticsEngine
+import ai_clinician
 
 # Import existing engines
 from triage_engine import TriageEngine
@@ -45,6 +47,12 @@ app.add_middleware(
 TEMP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../temp_processing"))
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Emitted when a row reaches Level 1 without an un-bypassable trigger phrase, so
+# its only source is the weighted score or the AI clinician.
+DEFAULT_EMERGENCY_INSTRUCTIONS = (
+    "Call 911 or go to the nearest emergency department now."
+)
+
 # ---------------------------------------------------------
 # PILLAR 1: Dynamic Natural Language Intake (REST)
 # ---------------------------------------------------------
@@ -63,14 +71,50 @@ async def process_nlp(data: dict):
     # 3. Check for red flag emergencies
     red_flags = CriticalHeuristicTriage.detect_red_flags(detected_symptoms, inferred_acuity, raw_text)
     
+    # An un-bypassable red flag outranks the weighted score. Without this the
+    # stored row understates acuity even though the client was told it is an
+    # emergency, and the queue, analytics and dossier all inherit the error.
+    if red_flags.get("is_emergency"):
+        priority_label = "Level 1: Emergency"
+
+    # 3b. GPT clinician. Runs in a worker thread because urllib blocks, and may
+    # only raise the level - a lower AI urgency is discarded so the deterministic
+    # engines stay the floor of every stored row.
+    analysis = await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: ai_clinician.analyze_symptoms(
+            raw_text, detected_symptoms, priority_label
+        ),
+    )
+    priority_label, escalated_action, escalated = ai_clinician.escalate(
+        priority_label, analysis
+    )
+    # Level 1 is Level 1 whichever engine put it there: an un-bypassable trigger
+    # phrase, the weighted score, or the AI clinician. A row stored as
+    # "Level 1: Emergency" that the client is not told is an emergency is the
+    # same incoherence as the old reverse, where every acuity flag was an
+    # emergency the score never justified.
+    is_emergency = priority_label == "Level 1: Emergency"
+
     # 4. Get specialist recommendation
     specialist_rec = SpecialistMatrix.get_specialist_recommendation(
         detected_symptoms,
         priority_label
     )
-    
+    if is_emergency:
+        # A Level 1 row referring to Primary Care or Dermatology would contradict
+        # its own acuity, so every emergency routes to the ED.
+        specialist_rec = {
+            "primary_specialist": "Emergency Medicine",
+            "department": "Emergency Department",
+        }
+
     # 5. Use emergency action if triggered
-    recommended_action = red_flags.get("recommended_action")
+    recommended_action = escalated_action or red_flags.get("recommended_action")
+    if is_emergency:
+        # A score-only or AI-only Level 1 has no protocol text, and must not fall
+        # through to the reassuring wording below.
+        recommended_action = recommended_action or f"🚨 EMERGENCY: {DEFAULT_EMERGENCY_INSTRUCTIONS}"
     if not recommended_action:
         recommended_action = "Consult physician if symptoms persist."
     
@@ -78,10 +122,11 @@ async def process_nlp(data: dict):
     triage_info = {
         "triage_level": priority_label,
         "recommended_action": recommended_action,
-        "is_emergency": red_flags.get("is_emergency", False),
+        "is_emergency": is_emergency,
         "emergency_protocol": red_flags.get("protocol"),
         "specialist": specialist_rec.get("primary_specialist"),
-        "symptom_severity": nlp_result.get("symptom_severity", "unknown")
+        "symptom_severity": nlp_result.get("symptom_severity", "unknown"),
+        "ai_analysis": analysis
     }
     
     # 6. Save the record
@@ -96,15 +141,22 @@ async def process_nlp(data: dict):
     response = {
         "status": "success",
         "record_id": record_id,
-        "is_emergency": red_flags.get("is_emergency", False),
+        "priority_level": priority_label,
+        "is_emergency": is_emergency,
         "specialist": specialist_rec.get("primary_specialist"),
         "department": specialist_rec.get("department"),
         "symptom_severity": nlp_result.get("symptom_severity", "unknown"),
-        "ai_confidence": nlp_result.get("confidence", 0.85)
+        "ai_confidence": nlp_result.get("confidence", 0.85),
+        "ai_analysis": analysis,
+        "ai_escalated": escalated
     }
     
-    if red_flags.get("is_emergency"):
-        response["emergency_protocol"] = red_flags.get("emergency_instructions")
+    if is_emergency:
+        # Fixed wording, not model text: an emergency banner must not be
+        # phrased by whatever the API returned.
+        response["emergency_protocol"] = red_flags.get("emergency_instructions") or (
+            DEFAULT_EMERGENCY_INSTRUCTIONS
+        )
         response["triggered_flags"] = red_flags.get("triggered_flags")
     
     return response
@@ -125,7 +177,7 @@ async def visual_ingestion(websocket: WebSocket):
         triage_result = triage_engine.calculate_priority(visual_context)
         
         # 3. Calculate triage score
-        _, triage_score = calculate_triage_level(
+        weighted_label, triage_score = calculate_triage_level(
             visual_context.get("extracted_symptoms", [])
         )
         
@@ -142,10 +194,21 @@ async def visual_ingestion(websocket: WebSocket):
             triage_result.get("triage_level", "")
         )
         
-        if red_flags.get("is_emergency"):
+        # A picture cannot declare an emergency. Colour dominance and edge density
+        # fire on warm-toned and merely noisy images, so Level 1 on this path needs
+        # an un-bypassable trigger phrase; a score in the Emergency band from signs
+        # alone is stored as Urgent.
+        is_emergency = red_flags.get("is_emergency", False)
+        if is_emergency:
             triage_result["is_emergency"] = True
-            triage_result["emergency_protocol"] = red_flags.get("emergency_instructions")
+            triage_result["triage_level"] = "Level 1: Emergency"
+            triage_result["emergency_protocol"] = red_flags.get("emergency_instructions") or (
+                DEFAULT_EMERGENCY_INSTRUCTIONS
+            )
             triage_result["triggered_flags"] = red_flags.get("triggered_flags")
+        elif weighted_label == "Level 1: Emergency":
+            triage_result["triage_level"] = "Level 2: Urgent"
+            triage_result["recommended_action"] = "Seek clinical evaluation the same day."
         
         triage_result["specialist"] = specialist_rec.get("primary_specialist")
         
@@ -162,7 +225,7 @@ async def visual_ingestion(websocket: WebSocket):
             "status": "chunk_received",
             "record_id": record_id,
             "triage": triage_result,
-            "is_emergency": red_flags.get("is_emergency", False),
+            "is_emergency": is_emergency,
             "specialist": specialist_rec.get("primary_specialist"),
             "ai_confidence": visual_context.get("confidence", 0.85)
         })
@@ -312,7 +375,9 @@ async def get_model_status():
                 "name": "Advanced NLP Engine",
                 "model": "BART Large MNLI + BioBERT",
                 "status": "active",
-                "gpt_enabled": False,
+                # Reported from reality: the clinician is live only when a key exists.
+                "gpt_enabled": ai_clinician.is_configured(),
+                "gpt_model": ai_clinician.model_name(),
                 "confidence": 0.87
             },
             "predictions": {
@@ -366,9 +431,13 @@ async def advanced_nlu(data: dict):
         
         # Process with advanced NLP
         nlp_result = nlp_engine.process_symptoms(text)
-        
-        # Add GPT insights if available
-        gpt_insights = nlp_result.get("gpt_insights")
+
+        # The retired nlp_engine use_gpt path never ran; this endpoint now calls the
+        # same clinician the intake path uses so "insights" is not a permanent null.
+        gpt_insights = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: ai_clinician.analyze_symptoms(text),
+        )
         
         return {
             "status": "success",

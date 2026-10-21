@@ -1,6 +1,5 @@
 import io
 from PIL import Image
-from cv2 import textureFlattening
 import torch
 import torchvision.transforms as transforms
 from torchvision import models
@@ -75,7 +74,7 @@ class AdvancedVisionEngine:
             
             # Determine acuity based on visual analysis
             inferred_acuity = self._determine_acuity(
-                extracted_symptoms, brightness, dominant_colors
+                extracted_symptoms, brightness, dominant_colors, texture_analysis
             )
             
             return {
@@ -110,13 +109,18 @@ class AdvancedVisionEngine:
         green_avg = np.mean(pixels[:, :, 1])
         blue_avg = np.mean(pixels[:, :, 2])
         
-        colors = []
-        if red_avg > 150:
-            colors.append("red")
-        if blue_avg > 150:
-            colors.append("blue")
-        if green_avg > 150:
-            colors.append("green")
+        # A channel only counts as dominant when it clearly leads the other two.
+        # Comparing each against 150 in isolation meant any bright image was
+        # simultaneously red, green and blue - a flat gray square scored all three
+        # and read as inflammation.
+        channels = {"red": red_avg, "green": green_avg, "blue": blue_avg}
+        colors = [
+            name
+            for name, value in channels.items()
+            if value > 60 and value - max(
+                other for channel, other in channels.items() if channel != name
+            ) > 20
+        ]
         
         return colors if colors else ["neutral"]
     
@@ -133,14 +137,17 @@ class AdvancedVisionEngine:
         texture_score = np.mean(edges) / 255.0 * 100
         return round(texture_score, 2)
     
-    def _map_to_clinical_symptoms(self, colors: list, brightness: float, 
+    def _map_to_clinical_symptoms(self, colors: list, brightness: float,
                                    texture: float) -> list:
         """Maps visual features to clinical symptoms."""
         symptoms = []
         
-        # Color-based symptom mapping
+        # One weighted token per visual feature. Redness previously expanded into
+        # inflammation + erythema + rash, three aliases for the same signal, and
+        # because the triage score is additive that single colour reading alone
+        # summed to exactly the 8-point Emergency threshold.
         if "red" in colors:
-            symptoms.extend(["inflammation", "erythema", "rash"])
+            symptoms.append("inflammation")
         if texture > 50:
             symptoms.append("lesion")
         if brightness < 40:
@@ -149,9 +156,9 @@ class AdvancedVisionEngine:
         return symptoms if symptoms else ["No abnormalities detected"]
     
     def _determine_acuity(self, symptoms: list, brightness: float, 
-                          colors: list) -> str:
+                          colors: list, texture: float) -> str:
         """Determines clinical acuity from visual analysis."""
-        if len(symptoms) > 2 or ("inflammation" in symptoms and textureFlattening > 60):
+        if len(symptoms) > 2 or ("inflammation" in symptoms and texture > 60):
             return "Urgent/Emergency Risk"
         elif len(symptoms) > 0:
             return "Routine"

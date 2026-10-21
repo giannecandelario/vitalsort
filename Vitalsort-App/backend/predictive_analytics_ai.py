@@ -252,10 +252,11 @@ class PredictiveAnalyticsEngine:
         """Generates predictive insights for entire patient population."""
         try:
             with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 
                 # Get all records
-                cursor.execute('SELECT * FROM triage_queue')
+                cursor.execute('SELECT priority_level FROM triage_queue')
                 records = cursor.fetchall()
                 
                 if not records:
@@ -268,7 +269,7 @@ class PredictiveAnalyticsEngine:
                 
                 for record in records:
                     # Simple heuristics
-                    priority = record[4] if len(record) > 4 else ""
+                    priority = record["priority_level"] or ""
                     if "Emergency" in str(priority):
                         emergency_count += 1
                         high_risk_count += 1

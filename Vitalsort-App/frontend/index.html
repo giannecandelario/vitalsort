@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Vitalsort — Multimodal diagnostic triage and clinical intake framework.">
+    <title>Vitalsort — Diagnostic Triage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+
+        <!-- Header -->
+        <header>
+            <div class="header-left">
+                <h1>Vitalsort</h1>
+                <p>Multimodal diagnostic triage framework</p>
+            </div>
+            <span class="header-badge">Clinical Triage</span>
+        </header>
+
+        <main>
+
+            <!-- PILLAR 1A: Visual Ingestion -->
+            <div class="card" id="visual-ingestion">
+                <div class="card-title">
+                    <span class="step-num">1</span>
+                    <h2>Visual Ingestion</h2>
+                </div>
+                <p class="card-desc">Upload a macro-photograph of the clinical sign for AI-assisted visual analysis.</p>
+                <input type="file" id="imageInput" accept="image/*">
+                <div class="btn-row">
+                    <button id="uploadImageBtn" class="btn-primary">Upload Image</button>
+                </div>
+                <div id="visualStatus" class="status"></div>
+            </div>
+
+            <!-- PILLAR 1B: NLP Symptom Intake -->
+            <div class="card" id="nlp-intake">
+                <div class="card-title">
+                    <span class="step-num">2</span>
+                    <h2>Symptom Intake</h2>
+                </div>
+                <p class="card-desc">Describe symptoms in plain language — onset, location, severity, and duration.</p>
+
+                <textarea
+                    id="nlpInput"
+                    name="nlpInput"
+                    placeholder="e.g. Red circular rash on left arm, appeared 3 days ago, warm to touch, mild itching, no fever..."
+                    oninput="if(document.getElementById('symptomInput')) document.getElementById('symptomInput').value = this.value;"
+                ></textarea>
+
+                <!-- Hidden mirror — keeps the submitTextBtn handler functional -->
+                <textarea id="symptomInput" aria-hidden="true" style="display:none;"></textarea>
+
+                <div class="btn-row">
+                    <button id="submitNlpBtn" class="btn-primary">Analyze Symptoms</button>
+                    <button id="submitTextBtn" class="btn-secondary" style="display:none;">Analyze Clinical Context</button>
+                </div>
+
+                <div id="nlpStatus" class="status"></div>
+
+                <p class="disclaimer">
+                    This tool provides clinical triage support only and does not constitute a medical diagnosis.
+                    In a life-threatening emergency, call 911 immediately.
+                </p>
+            </div>
+
+            <!-- PILLAR 3: Active Triage Queue -->
+            <div class="card" id="provider-dashboard">
+                <div class="card-title">
+                    <span class="step-num">3</span>
+                    <h2>Active Triage Queue</h2>
+                </div>
+
+                <div class="queue-toolbar">
+                    <button id="refreshQueueBtn" class="btn-secondary btn-sm">Refresh</button>
+                    <button id="viewAnalyticsBtn" class="btn-primary btn-sm">Analytics</button>
+                    <span id="queueStatus" class="queue-count"></span>
+                </div>
+
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Timestamp</th>
+                            <th>Priority</th>
+                            <th>Symptoms</th>
+                            <th>Recommended Action</th>
+                            <th>Specialist</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="queueBody">
+                        <tr class="empty-row">
+                            <td colspan="7">No records yet. Submit a triage above to get started.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- PILLAR 6: Patient Contact -->
+            <div class="card" id="patient-contact">
+                <div class="card-title">
+                    <span class="step-num">4</span>
+                    <h2>Patient Contact</h2>
+                </div>
+                <p class="card-desc">Optional — provide contact details for follow-up care coordination.</p>
+
+                <form id="contactForm">
+                    <div class="form-group">
+                        <label for="patientName">Full Name</label>
+                        <input type="text" id="patientName" placeholder="Full name">
+                    </div>
+                    <div class="form-group">
+                        <label for="patientEmail">Email</label>
+                        <input type="email" id="patientEmail" placeholder="email@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="patientPhone">Phone</label>
+                        <input type="tel" id="patientPhone" placeholder="+1 (555) 000-0000">
+                    </div>
+                    <div class="form-group">
+                        <label for="patientNotes">Notes</label>
+                        <textarea id="patientNotes" placeholder="Additional clinical notes or context..." style="min-height: 80px;"></textarea>
+                    </div>
+                    <button type="button" id="submitContactBtn" class="btn-primary">Save Contact</button>
+                    <div id="contactStatus" class="status"></div>
+                </form>
+            </div>
+
+            <!-- PILLAR 7: Analytics Dashboard -->
+            <div class="card" id="analytics-dashboard" style="display:none;">
+                <div class="card-title" style="justify-content: space-between;">
+                    <h2>Analytics</h2>
+                    <button id="closeAnalyticsBtn" class="btn-secondary btn-sm">Close</button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Records</div>
+                        <div id="totalRecords" class="stat-value">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Emergency Cases</div>
+                        <div id="emergencyCount" class="stat-value">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Emergency Rate</div>
+                        <div id="emergencyPercent" class="stat-value">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Records Today</div>
+                        <div id="recordsToday" class="stat-value">—</div>
+                    </div>
+                </div>
+
+                <p class="analytics-section-title">Triage Distribution · 30 days</p>
+                <div id="triageChart"></div>
+
+                <div class="divider"></div>
+
+                <p class="analytics-section-title">Common Symptoms · 30 days</p>
+                <div id="symptomsList"></div>
+
+                <div class="divider"></div>
+
+                <p class="analytics-section-title">Daily Trends · Last 7 days</p>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th style="text-align:center;">Total</th>
+                            <th style="text-align:center;">Emergency</th>
+                            <th style="text-align:center;">Urgent</th>
+                            <th style="text-align:center;">Avg Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trendsTable">
+                        <tr class="empty-row">
+                            <td colspan="5">Loading trends...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
